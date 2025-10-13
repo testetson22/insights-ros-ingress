@@ -12,6 +12,283 @@ This service combines the upload handling capabilities of `insights-ingress-go` 
 HCCM Upload → insights-ros-ingress → MinIO (ROS bucket) → Kafka (ROS events) → ROS Processor
 ```
 
+## Authentication Architecture
+
+This service implements a **dual-server architecture** with selective authentication to support both intra-cluster monitoring and multi-cluster data ingestion scenarios.
+
+### 🏗️ **Dual-Server Design**
+
+| Port | Endpoints | Authentication | Use Case | Client Location |
+|------|-----------|----------------|----------|-----------------|
+| **8080** | `/upload` | ✅ **Sidecar-based** (Keycloak JWT) | Business API | External clusters |
+| **8080** | `/health`, `/ready` | ❌ **Unprotected** | Pod lifecycle | Kubernetes |
+| **9090** | `/metrics` | ✅ **OAuth2 TokenReviewer** | Observability | Same cluster |
+
+### **Port 8080 - Main API Server (Sidecar Authentication)**
+
+**Endpoints:**
+- `POST /api/ingress/v1/upload` - HCCM data ingestion from external clusters
+- `GET /health` - Health check endpoint (**Unprotected** - Kubernetes liveness probe)
+- `GET /ready` - Readiness probe endpoint (**Unprotected** - Kubernetes readiness probe)
+
+**Authentication Strategy:**
+- **Upload endpoint**: Sidecar-based authentication with Keycloak JWT tokens
+- **Health/Ready endpoints**: Always unprotected for Kubernetes pod lifecycle management
+- **Sidecar pattern**: JWT validation handled by sidecar container (upload endpoint only)
+- **Multi-cluster support** - external OpenShift clusters authenticate via JWT
+- **Future extensibility** - authentication logic separated from business logic
+
+**Rationale:**
+```
+# Upload endpoint flow:
+External Cluster → Keycloak JWT → Sidecar (JWT Validation) → /upload (Port 8080)
+
+# Health/Ready endpoint flow:
+Kubernetes → /health, /ready (Port 8080) [Direct, no sidecar]
+```
+- **Multi-cluster authentication**: External clusters use Keycloak JWT tokens for upload
+- **Sidecar pattern**: Simplifies Keycloak JWT integration and token validation
+- **Pod lifecycle**: Health/Ready endpoints bypass sidecar for Kubernetes probes
+- **Provider flexibility**: Easy to swap authentication providers without code changes
+- **Business logic isolation**: Authentication concerns separated from upload processing
+
+### **Port 9090 - Metrics Server (OAuth2 TokenReviewer)**
+
+**Endpoints:**
+- `GET /metrics` - Prometheus metrics for monitoring
+
+**Authentication Strategy:**
+- **Kubernetes OAuth2 TokenReviewer** - native K8s authentication
+- **Service account tokens** - standard Kubernetes RBAC
+- **Intra-cluster only** - designed for same-cluster Prometheus scraping
+
+**Rationale:**
+```
+Prometheus (Same Cluster) → K8s Service Account Token → TokenReviewer API → Metrics (Port 9090)
+```
+- **Native Kubernetes security**: Leverages built-in K8s authentication mechanisms
+- **RBAC integration**: Standard Kubernetes permissions for monitoring services
+- **Cluster-local**: No external authentication complexity needed
+- **Production monitoring**: Enterprise-grade security for observability endpoints
+
+### 🎯 **Development Guidelines**
+
+#### **For Business API Development (Port 8080):**
+```bash
+# Upload endpoint - Local development (no sidecar)
+curl http://localhost:8080/api/ingress/v1/upload
+
+# Upload endpoint - Production (JWT handled by sidecar)
+# Application receives pre-authenticated requests from sidecar
+
+# Health/Ready endpoints - Always unprotected (local & production)
+curl http://localhost:8080/health    # Kubernetes liveness probe
+curl http://localhost:8080/ready     # Kubernetes readiness probe
+```
+
+#### **Sidecar Authentication Example (Envoy + Authorino):**
+
+**Deployment Architecture:**
+```yaml
+# Pod contains both Envoy sidecar and application containers
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        # Envoy Proxy Sidecar (intercepts traffic)
+        - name: envoy-proxy
+          image: envoyproxy/envoy:v1.24.1
+          ports:
+            - containerPort: 8080  # Public-facing port
+            - containerPort: 9901  # Admin port
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+
+        # Application Container (receives authenticated requests)
+        - name: ingress
+          image: insights-ros-ingress:latest
+          ports:
+            - containerPort: 8081  # Internal port (behind Envoy)
+          env:
+            - name: SERVER_PORT
+              value: "8081"       # Different from Envoy port
+            - name: AUTH_ENABLED
+              value: "false"      # App-level auth disabled (handled by sidecar)
+```
+
+**Envoy Configuration (envoy.yaml):**
+```yaml
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8080 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          http_filters:
+          # External authorization filter - calls Authorino
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              grpc_service:
+                envoy_grpc:
+                  cluster_name: authorino-service
+              failure_mode_allow: false  # Fail closed
+
+          # Standard HTTP router
+          - name: envoy.filters.http.router
+          route_config:
+            virtual_hosts:
+            - name: ros_ingress_backend
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route:
+                  cluster: ros-ingress-backend
+
+  clusters:
+  # Authorino external authorization service
+  - name: authorino-service
+    type: LOGICAL_DNS
+    load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: ros-authorino-custom-authorization.ros-ocp.svc.cluster.local
+                port_value: 50051
+
+  # Backend application (same pod, different port)
+  - name: ros-ingress-backend
+    type: LOGICAL_DNS
+    load_assignment:
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: localhost  # Same pod
+                port_value: 8081    # Application port
+```
+
+**Authorino AuthConfig (Keycloak JWT):**
+```yaml
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: ros-ingress-jwt-auth
+spec:
+  hosts:
+  - "ros-ingress.ros-ocp.svc.cluster.local"
+
+  # JWT Authentication with Keycloak
+  authentication:
+    "keycloak-jwt":
+      jwt:
+        issuerUrl: "https://keycloak.example.com/auth/realms/ros-realm"
+      credentials:
+        authorizationHeader:
+          prefix: Bearer
+
+  # Authorization - allow authenticated users
+  authorization:
+    "allow-authenticated":
+      patternMatching:
+        patterns:
+        - selector: auth.identity.sub
+          operator: neq
+          value: ""
+
+  # Forward authentication context to backend
+  response:
+    success:
+      headers:
+        "X-ROS-Authenticated":
+          plain: { value: "true" }
+        "X-ROS-User-ID":
+          plain: { selector: auth.identity.sub }
+        "X-Bearer-Token":
+          plain: { selector: context.request.http.headers.authorization }
+```
+
+**Authentication Flow:**
+
+*Upload Endpoint (with JWT validation):*
+```
+1. Client → POST /api/ingress/v1/upload + Authorization: Bearer <jwt>
+2. Envoy → Intercepts request at port 8080
+3. Envoy → Calls Authorino via gRPC: "Validate this JWT"
+4. Authorino → Validates JWT against Keycloak issuer
+5. Authorino → Returns: "Valid user + headers"
+6. Envoy → Forwards to localhost:8081 with auth headers:
+   - X-ROS-Authenticated: true
+   - X-ROS-User-ID: user123
+   - X-Bearer-Token: <original-jwt>
+7. Application → Processes upload (no auth logic needed)
+```
+
+*Health/Ready Endpoints (bypass sidecar):*
+```
+1. Kubernetes → GET /health (or /ready) directly to port 8081
+2. Application → Responds immediately (no Envoy/Authorino involved)
+3. Pod lifecycle management continues normally
+```
+
+**Note**: Health and readiness probes must bypass the sidecar to prevent authentication dependencies during pod lifecycle management. The Envoy configuration can be set to exclude certain paths, or probes can target the application port directly.
+
+**Complete Implementation**: See the [ros-helm-chart](https://github.com/insights-onprem/ros-helm-chart) repository for the complete Envoy + Authorino deployment templates, including:
+- `templates/deployment-ingress.yaml` - Sidecar deployment configuration
+- `templates/envoy-config.yaml` - Envoy proxy configuration
+- `templates/authconfig.yaml` - Authorino JWT authentication rules
+- `docs/README-JWT-AUTH.md` - Complete setup instructions
+
+#### **For Monitoring Setup (Port 9090):**
+```yaml
+# Prometheus scrape config
+- job_name: 'insights-ros-ingress-metrics'
+  kubernetes_sd_configs:
+  - role: pod
+  scheme: http
+  metrics_path: /metrics
+  static_configs:
+  - targets: ['insights-ros-ingress:9090']
+  # Uses K8s service account token automatically
+```
+
+#### **Authentication Flow Examples:**
+
+**External Client Upload (Port 8080 /upload):**
+1. Client obtains **Keycloak JWT token**
+2. HTTP request: `Authorization: Bearer <jwt-token>` to `/api/ingress/v1/upload`
+3. **Sidecar validates JWT** against Keycloak
+4. **Application receives authenticated request** (no auth logic needed)
+5. Upload processing continues normally
+
+**Kubernetes Health Checks (Port 8080 /health, /ready):**
+1. Kubernetes sends probe requests **directly to application** (bypasses sidecar)
+2. **No authentication required** - immediate response
+3. Pod lifecycle management continues normally
+
+**Prometheus Metrics Collection (Port 9090):**
+1. Prometheus uses **Kubernetes service account token**
+2. HTTP request: `Authorization: Bearer <k8s-sa-token>`
+3. **TokenReviewer validates** service account permissions
+4. **Application serves metrics** to authenticated monitoring service
+
+### 🔒 **Security Benefits**
+
+- ✅ **Clear security boundaries** between business and observability APIs
+- ✅ **Multi-cluster authentication** support via JWT tokens
+- ✅ **Native Kubernetes integration** for monitoring workflows
+- ✅ **Provider flexibility** - easy to change authentication mechanisms
+- ✅ **Business logic isolation** - authentication handled externally
+- ✅ **Zero trust architecture** - both external and internal access properly secured
+
 ## Features
 
 - **HCCM Upload Processing**: Handles `application/vnd.redhat.hccm.upload` content-type
@@ -99,10 +376,13 @@ make lint
 
 ## API Endpoints
 
-- `POST /api/ingress/v1/upload` - Upload HCCM payload
-- `GET /health` - Health check
-- `GET /ready` - Readiness probe
-- `GET /metrics` - Prometheus metrics
+### Port 8080 - Main API Server
+- `POST /api/ingress/v1/upload` - Upload HCCM payload (Sidecar authentication with Keycloak JWT)
+- `GET /health` - Health check (Unprotected - Kubernetes liveness probe)
+- `GET /ready` - Readiness probe (Unprotected - Kubernetes readiness probe)
+
+### Port 9090 - Metrics Server
+- `GET /metrics` - Prometheus metrics (OAuth2 TokenReviewer authentication)
 
 ## Testing
 
