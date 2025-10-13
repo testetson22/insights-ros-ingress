@@ -2,6 +2,7 @@ package upload
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RedHatInsights/insights-ros-ingress/internal/auth"
 	"github.com/RedHatInsights/insights-ros-ingress/internal/config"
 	"github.com/RedHatInsights/insights-ros-ingress/internal/health"
 	"github.com/RedHatInsights/insights-ros-ingress/internal/logger"
@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redhatinsights/platform-go-middlewares/v2/identity"
 	"github.com/sirupsen/logrus"
-	authenticationv1 "k8s.io/api/authentication/v1"
 )
 
 // Handler handles HCCM upload requests
@@ -94,7 +93,8 @@ func (h *Handler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract identity from header
+	// Extract identity from header and get JWT token
+	// When auth is disabled, identity will be nil and jwtToken will be empty
 	identity, err := h.extractIdentity(r)
 	if err != nil && h.config.Auth.Enabled {
 		h.respondError(w, http.StatusUnauthorized, "Invalid or missing identity", requestLogger)
@@ -105,6 +105,10 @@ func (h *Handler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	if identity != nil {
 		requestLogger = logger.WithUploadContext(h.logger, requestID, identity.AccountNumber, identity.OrgID)
 	}
+
+	// Extract JWT token for downstream processing
+	// When auth is disabled, this will be empty string which is acceptable
+	jwtToken := h.extractJWTToken(r)
 
 	// Get file from multipart form
 	file, fileHeader, err := h.getFileFromRequest(r)
@@ -141,7 +145,7 @@ func (h *Handler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	health.UploadSizeBytes.WithLabelValues(contentType).Observe(float64(fileHeader.Size))
 
 	// Process the upload
-	if err := h.processUpload(r.Context(), file, requestID, identity, requestLogger); err != nil {
+	if err := h.processUpload(r.Context(), file, requestID, identity, jwtToken, requestLogger); err != nil {
 		health.UploadsTotal.WithLabelValues("error", contentType).Inc()
 		h.respondError(w, http.StatusInternalServerError, "Failed to process upload", requestLogger)
 		requestLogger.WithError(err).Error("Upload processing failed")
@@ -172,7 +176,7 @@ func (h *Handler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // processUpload handles the core upload processing logic
-func (h *Handler) processUpload(ctx context.Context, file io.Reader, requestID string, identity *identity.Identity, logger *logrus.Entry) error {
+func (h *Handler) processUpload(ctx context.Context, file io.Reader, requestID string, identity *identity.Identity, jwtToken string, logger *logrus.Entry) error {
 	// Extract payload
 	extractedPayload, err := h.payloadExtractor.ExtractPayload(file, requestID)
 	if err != nil {
@@ -251,14 +255,12 @@ func (h *Handler) processUpload(ctx context.Context, file io.Reader, requestID s
 		}).Info("Successfully uploaded ROS file")
 	}
 
-	token, err := h.getOAuthTokenFromContext(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get OAuth token from context: %w", err)
-	}
 	// Send ROS event message
+	// Use the JWT token from Keycloak for downstream authentication
+	// If auth is disabled, jwtToken will be empty string
 	rosMessage := &messaging.ROSMessage{
 		RequestID:   requestID,
-		B64Identity: token,
+		B64Identity: jwtToken,
 		Metadata: messaging.ROSMetadata{
 			Account:         h.getAccountID(identity),
 			OrgID:           h.getOrgID(identity),
@@ -345,79 +347,114 @@ func (h *Handler) extractIdentity(r *http.Request) (*identity.Identity, error) {
 		return nil, nil
 	}
 
-	// Get authenticated user from request context (set by auth middleware)
-	user, err := h.getAuthenticatedUserFromContext(r.Context())
+	// Check if request is authenticated by Envoy/Authorino sidecar
+	// The sidecar forwards these headers after validating the Keycloak JWT:
+	// - X-ROS-Authenticated: "true"
+	// - X-ROS-User-ID: user ID from JWT sub claim
+	// - X-Bearer-Token: original JWT token
+	authenticated := r.Header.Get("X-ROS-Authenticated")
+	if authenticated != "true" {
+		return nil, fmt.Errorf("request not authenticated by sidecar - X-ROS-Authenticated header missing or invalid")
+	}
+
+	// Get the JWT token from headers
+	bearerToken := h.extractJWTToken(r)
+	if bearerToken == "" {
+		return nil, fmt.Errorf("no JWT token found in X-Bearer-Token or Authorization header")
+	}
+
+	// Parse JWT token to extract claims (org_id, account, etc.)
+	claims, err := h.parseJWTClaims(bearerToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get authenticated user from context: %w", err)
+		return nil, fmt.Errorf("failed to parse JWT claims: %w", err)
 	}
 
 	h.logger.WithFields(logrus.Fields{
-		"user": user.Username,
-		"uid":  user.UID,
-	}).Debug("Retrieved authenticated user from context")
+		"user_id":  claims["sub"],
+		"org_id":   claims["org_id"],
+		"account":  claims["account_number"],
+		"username": claims["preferred_username"],
+	}).Debug("Extracted identity from JWT token")
 
-	// Create identity from OAuth2 user information
-	return h.createIdentityFromOAuth2User(user), nil
+	// Create identity from JWT claims
+	return h.createIdentityFromJWT(claims), nil
 }
 
-// getAuthenticatedUserFromContext retrieves the authenticated user from request context
-func (h *Handler) getAuthenticatedUserFromContext(ctx context.Context) (*authenticationv1.UserInfo, error) {
-	userValue := ctx.Value(auth.AuthenticatedUserKey)
-	if userValue == nil {
-		return nil, fmt.Errorf("no authenticated user found in context - ensure auth middleware is properly configured")
+// extractJWTToken extracts the JWT token from request headers
+// Tries X-Bearer-Token first (forwarded by sidecar), then Authorization header (fallback)
+func (h *Handler) extractJWTToken(r *http.Request) string {
+	// Try X-Bearer-Token first (forwarded by Envoy/Authorino sidecar)
+	bearerToken := r.Header.Get("X-Bearer-Token")
+	if bearerToken != "" {
+		return bearerToken
 	}
 
-	user, ok := userValue.(authenticationv1.UserInfo)
-	if !ok {
-		return nil, fmt.Errorf("invalid user type in context")
+	// Fallback to Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
-	return &user, nil
+	return ""
 }
 
-// getOAuthTokenFromContext retrieves the OAuth token from request context (if needed for downstream services)
-func (h *Handler) getOAuthTokenFromContext(ctx context.Context) (string, error) {
-	tokenValue := ctx.Value(auth.OauthTokenKey)
-	if tokenValue == nil {
-		return "", fmt.Errorf("no OAuth token found in context")
+// parseJWTClaims parses JWT token and extracts claims without validation
+// Validation is already done by the Envoy/Authorino sidecar
+func (h *Handler) parseJWTClaims(tokenString string) (map[string]interface{}, error) {
+	// Split the token into parts
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid JWT token format - expected 3 parts, got %d", len(parts))
 	}
 
-	token, ok := tokenValue.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid token type in context")
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}
 
-	return token, nil
+	// Parse JSON claims
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JWT claims: %w", err)
+	}
+
+	return claims, nil
 }
 
-// createIdentityFromOAuth2User creates an identity from OAuth2/Kubernetes user information
-// This supports tokens issued by Keycloak or Kubernetes API server
-func (h *Handler) createIdentityFromOAuth2User(user *authenticationv1.UserInfo) *identity.Identity {
-	// Extract organization ID and account number from user information
-	// Adjust these extraction methods based on your OAuth2 provider (Keycloak/K8s API)
+// createIdentityFromJWT creates an identity from Keycloak JWT claims
+func (h *Handler) createIdentityFromJWT(claims map[string]interface{}) *identity.Identity {
+	// Extract standard JWT claims
+	username := h.getStringClaim(claims, "preferred_username", "sub")
+	email := h.getStringClaim(claims, "email", "")
+	firstName := h.getStringClaim(claims, "given_name", "")
+	lastName := h.getStringClaim(claims, "family_name", "")
 
-	orgID := h.extractOrgIDFromUser(user)
-	accountNumber := h.extractAccountNumberFromUser(user)
+	// Extract Red Hat specific claims
+	orgID := h.getStringClaim(claims, "org_id", "organization_id", "tenant_id")
+	accountNumber := h.getStringClaim(claims, "account_number", "account_id", "account")
 
-	// Determine token type based on username pattern
-	tokenType := "User"
-	if strings.HasPrefix(user.Username, "system:serviceaccount:") {
-		tokenType = "ServiceAccount"
+	// Use defaults if not provided
+	if orgID == "" {
+		orgID = "1" // Default org ID
+	}
+	if accountNumber == "" {
+		accountNumber = "1" // Default account number
 	}
 
 	return &identity.Identity{
 		AccountNumber: accountNumber,
 		OrgID:         orgID,
-		Type:          tokenType,
-		AuthType:      "oauth2",
+		Type:          "User",
+		AuthType:      "jwt-keycloak",
 		User: &identity.User{
-			Username:  user.Username,
-			Email:     h.extractEmailFromUser(user),
-			FirstName: h.extractFirstNameFromUser(user),
-			LastName:  h.extractLastNameFromUser(user),
+			Username:  username,
+			Email:     email,
+			FirstName: firstName,
+			LastName:  lastName,
 			Active:    true,
-			OrgAdmin:  h.isOrgAdminUser(user),
-			Internal:  h.isInternalUser(user),
+			OrgAdmin:  false,
+			Internal:  false,
 			Locale:    "en_US",
 		},
 		Internal: identity.Internal{
@@ -426,98 +463,17 @@ func (h *Handler) createIdentityFromOAuth2User(user *authenticationv1.UserInfo) 
 	}
 }
 
-// Helper methods to extract information from OAuth2 user
-// Customize these based on your OAuth2 provider (Keycloak, Kubernetes API, etc.)
+// Helper methods to extract information from JWT claims
 
-func (h *Handler) extractOrgIDFromUser(user *authenticationv1.UserInfo) string {
-	// Look for org ID in user groups (common in Keycloak/K8s RBAC)
-	for _, group := range user.Groups {
-		if strings.HasPrefix(group, "org:") {
-			orgID := strings.TrimPrefix(group, "org:")
-			if orgID != "" { // Skip empty org IDs
-				return orgID
+func (h *Handler) getStringClaim(claims map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, exists := claims[key]; exists {
+			if strValue, ok := value.(string); ok && strValue != "" {
+				return strValue
 			}
 		}
 	}
-
-	// Check extra fields (Keycloak custom claims, K8s annotations)
-	if orgIDExtra, exists := user.Extra["org_id"]; exists && len(orgIDExtra) > 0 {
-		return orgIDExtra[0]
-	}
-
-	// For Keycloak, you might also check:
-	// - user.Extra["organization"]
-	// - user.Extra["tenant_id"]
-
-	// Default fallback - consider making this configurable
-	return "1"
-}
-
-func (h *Handler) extractAccountNumberFromUser(user *authenticationv1.UserInfo) string {
-	// Check extra fields (Keycloak custom claims, K8s annotations)
-	if accountExtra, exists := user.Extra["account_number"]; exists && len(accountExtra) > 0 {
-		return accountExtra[0]
-	}
-
-	// Check for Keycloak alternative fields
-	if customerIDExtra, exists := user.Extra["customer_id"]; exists && len(customerIDExtra) > 0 {
-		return customerIDExtra[0]
-	}
-
-	if clientIDExtra, exists := user.Extra["client_id"]; exists && len(clientIDExtra) > 0 {
-		return clientIDExtra[0]
-	}
-
-	// Look for account in user groups (RBAC mapping)
-	for _, group := range user.Groups {
-		if strings.HasPrefix(group, "account:") {
-			return strings.TrimPrefix(group, "account:")
-		}
-	}
-
-	// Could also parse from username (e.g., "user@account123") if needed
-
-	// Default fallback - consider making this configurable
-	return "1"
-}
-
-func (h *Handler) extractEmailFromUser(user *authenticationv1.UserInfo) string {
-	if emailExtra, exists := user.Extra["email"]; exists && len(emailExtra) > 0 {
-		return emailExtra[0]
-	}
 	return ""
-}
-
-func (h *Handler) extractFirstNameFromUser(user *authenticationv1.UserInfo) string {
-	if firstNameExtra, exists := user.Extra["first_name"]; exists && len(firstNameExtra) > 0 {
-		return firstNameExtra[0]
-	}
-	return ""
-}
-
-func (h *Handler) extractLastNameFromUser(user *authenticationv1.UserInfo) string {
-	if lastNameExtra, exists := user.Extra["last_name"]; exists && len(lastNameExtra) > 0 {
-		return lastNameExtra[0]
-	}
-	return ""
-}
-
-func (h *Handler) isOrgAdminUser(user *authenticationv1.UserInfo) bool {
-	for _, group := range user.Groups {
-		if group == "org-admin" || strings.Contains(group, "admin") {
-			return true
-		}
-	}
-	return false
-}
-
-func (h *Handler) isInternalUser(user *authenticationv1.UserInfo) bool {
-	for _, group := range user.Groups {
-		if group == "internal" || strings.Contains(group, "redhat") {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *Handler) getFileFromRequest(r *http.Request) (io.ReadCloser, *multipart.FileHeader, error) {
@@ -564,7 +520,8 @@ func (h *Handler) getAccountID(identity *identity.Identity) string {
 	if identity != nil {
 		return identity.AccountNumber
 	}
-	return "unknown"
+	// Default fallback when auth is disabled - maintains backwards compatibility
+	return "1"
 }
 
 func (h *Handler) getOrgID(identity *identity.Identity) string {
@@ -574,7 +531,8 @@ func (h *Handler) getOrgID(identity *identity.Identity) string {
 		}
 		return identity.OrgID
 	}
-	return "unknown"
+	// Default fallback when auth is disabled - maintains backwards compatibility
+	return "1"
 }
 
 func (h *Handler) respondError(w http.ResponseWriter, statusCode int, message string, logger *logrus.Entry) {
