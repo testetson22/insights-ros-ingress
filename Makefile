@@ -87,8 +87,7 @@ mocks: install-tools ## Generate mocks for testing
 	@if [ ! -f internal/auth/mocks/mock_k8s_auth.go ]; then \
 		echo "Generating mocks with go generate..."; \
 		cd internal/auth/ && \
-		GOFLAGS=-mod=mod go generate ./generate.go || \
-		echo "Mocks already present or generation failed - using existing mocks"; \
+		GOFLAGS=-mod=mod go generate ./generate.go; \
 	fi
 	@echo "Mocks ready in internal/auth/mocks/"
 
@@ -238,7 +237,7 @@ install-tools: ## Install required development tools
 	@echo "Installing development tools..."
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "Installing golangci-lint..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin latest; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin latest; \
 	}
 	@command -v goimports >/dev/null 2>&1 || { \
 		echo "Installing goimports..."; \
