@@ -1,17 +1,21 @@
 name: Helm Chart Quality Test
 
-# This workflow tests the insights-ros-ingress Helm chart deployment on Kind with locally built application
+# This workflow tests the insights-ros-ingress Helm chart deployment on KIND with locally built application
+#
+# Workflow Steps:
+# 1. make deploy-kind    - Deploy KIND cluster using authoritative script from ros-helm-chart
+# 2. make helm-install   - Install Helm chart using authoritative script from ros-helm-chart
+# 3. make update-kind-image - Build local code and update deployment to use it instead of registry image
+# 4. Run dataflow tests  - Execute test-k8s-dataflow.sh to verify full functionality
+#
+# This ensures CI/CD uses the same workflow as local development
+#
 # Features:
-# - Builds container image directly using make build-image with configurable IMAGE_TAG
-# - Loads local container image into KIND control plane
-# - Deploys Helm chart using the locally built image instead of remote registry
-# - Tests the actual code changes in the PR/push
-# - Uses targeted pullPolicy: Never only for insights-ros-ingress service
+# - Uses Podman as container runtime (daemonless, rootless)
 # - Uses archive method for reliable Podman to KIND image transfer
-# Uses alternative registries to avoid Docker Hub rate limiting:
-# - public.ecr.aws for official images (postgres, redis, busybox, confluent)
-# - localhost for application images (built locally)
-# - ghcr.io as fallback for some images
+# - Tests actual code changes in PR/push (not registry images)
+# - Uses pullPolicy: Never for locally built images
+# - Downloads authoritative deployment scripts from ros-helm-chart on every run
 
 on:
   pull_request:
@@ -103,159 +107,76 @@ jobs:
           echo "KIND_CLUSTER_NAME=insights-ros-ingress-test-cluster" >> $GITHUB_ENV
           echo "HELM_RELEASE_NAME=ros-ingress-test" >> $GITHUB_ENV
           echo "NAMESPACE=insights-ros-ingress-test" >> $GITHUB_ENV
-
-      - name: Setup KIND cluster
-        timeout-minutes: 15
-        run: |
-          cd deployments/kubernetes/scripts
-          export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
-          export HELM_RELEASE_NAME=${{ env.HELM_RELEASE_NAME }}
-          export NAMESPACE=${{ env.NAMESPACE }}
+          echo "IMAGE_TAG=ci-test-${{ github.run_number }}" >> $GITHUB_ENV
 
           # Configure KIND to use Podman as container runtime
           export KIND_EXPERIMENTAL_PROVIDER=podman
-          echo "🔧 Configured KIND to use Podman runtime: KIND_EXPERIMENTAL_PROVIDER=podman"
+          echo "KIND_EXPERIMENTAL_PROVIDER=podman" >> $GITHUB_ENV
+          echo "🔧 Configured KIND to use Podman runtime"
 
-          # Make scripts executable
-          chmod +x deploy-kind.sh
+      - name: Deploy KIND Cluster (using make target)
+        timeout-minutes: 15
+        run: |
+          export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+          export HELM_RELEASE_NAME=${{ env.HELM_RELEASE_NAME }}
+          export NAMESPACE=${{ env.NAMESPACE }}
+          export KIND_EXPERIMENTAL_PROVIDER=${{ env.KIND_EXPERIMENTAL_PROVIDER }}
 
-          # Setup KIND cluster
-          echo "Setting up KIND cluster..."
-          ./deploy-kind.sh
+          echo "🚀 Deploying KIND cluster using make deploy-kind..."
+          make deploy-kind
 
           # Verify cluster is running
-          echo "Verifying cluster status..."
+          echo "✅ Verifying cluster status..."
           kind get clusters
           kubectl cluster-info
           kubectl get nodes -o wide
 
-      - name: Build and load image into KIND control plane
-        run: |
-          # Configure KIND to use Podman as container runtime
-          export KIND_EXPERIMENTAL_PROVIDER=podman
-          echo "🔧 Configured KIND to use Podman runtime: KIND_EXPERIMENTAL_PROVIDER=podman"
-
-          echo "🐳 Building container image using make build-image..."
-          IMAGE_TAG=test make build-image
-          echo "✅ Container image built successfully"
-
-          # Verify image was built
-          echo "🔍 Verifying built image:"
-          podman images ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
-
-          # Debug: Show Podman state
-          echo "🔍 Podman storage info:"
-          podman info | grep -E "(store|root|runroot)" || true
-          echo "Podman version:"
-          podman --version
-
-          # Verify specific image exists
-          echo "🔍 Checking for target image:"
-          if ! podman images ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test --format "{{.Repository}}:{{.Tag}}" | grep -q "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test"; then
-            echo "❌ Image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test not found after build!"
-            echo "Available images:"
-            podman images
-            exit 1
-          fi
-          echo "✅ Target image confirmed"
-
-          echo "📦 Loading image into KIND control plane..."
-          # Use archive method for reliable Podman to KIND image transfer
-          echo "💾 Saving image to archive..."
-          podman save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test -o /tmp/insights-ros-ingress-test.tar
-          echo "✅ Image saved to archive"
-
-          # Verify archive was created
-          ls -la /tmp/insights-ros-ingress-test.tar
-
-          echo "📥 Loading archive into KIND cluster..."
-          kind load image-archive /tmp/insights-ros-ingress-test.tar --name insights-ros-ingress-test-cluster
-          echo "✅ Image loaded into KIND control plane"
-
-          # Clean up the temporary tar file
-          rm -f /tmp/insights-ros-ingress-test.tar
-
-          # Verify the image is available in the KIND cluster
-          kubectl get nodes -o wide
-
-      - name: Deploy Helm Chart
+      - name: Install Helm Chart (using make target)
         timeout-minutes: 15
         run: |
-          # Deploy Helm chart with local image overrides
-          cd deployments/kubernetes/scripts
           export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
           export HELM_RELEASE_NAME=${{ env.HELM_RELEASE_NAME }}
           export NAMESPACE=${{ env.NAMESPACE }}
 
-          # Create temporary values file to override image settings
-          cat > /tmp/local-image-values.yaml <<EOF
-          # Only override insights-ros-ingress image, let other services use default pull policy
-          insights-ros-ingress:
-            image:
-              repository: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-              tag: test
-              pullPolicy: Never
-          EOF
-
-          echo "📋 Using local image values:"
-          cat /tmp/local-image-values.yaml
-
-          # Make scripts executable
-          chmod +x install-helm-chart.sh
-
-          # Deploy Helm chart with local image overrides
-          echo "Installing insights-ros-ingress Helm chart with local image..."
-          export VALUES_FILE="/tmp/local-image-values.yaml"
-          ./install-helm-chart.sh
+          echo "📦 Installing Helm chart using make helm-install..."
+          make helm-install
 
           # Verify deployment
-          echo "Verifying Helm chart deployment..."
-          kubectl get pods -n $NAMESPACE
-          kubectl get services -n $NAMESPACE
-          kubectl get ingress -n $NAMESPACE
+          echo "✅ Verifying Helm chart deployment..."
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get services -n ${{ env.NAMESPACE }}
+          kubectl get ingress -n ${{ env.NAMESPACE }}
+
+      - name: Build and Deploy Local Code (using make target)
+        timeout-minutes: 15
+        run: |
+          export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+          export NAMESPACE=${{ env.NAMESPACE }}
+          export IMAGE_TAG=${{ env.IMAGE_TAG }}
+          export CONTAINER_RUNTIME=${{ env.CONTAINER_RUNTIME }}
+          export KIND_EXPERIMENTAL_PROVIDER=${{ env.KIND_EXPERIMENTAL_PROVIDER }}
+
+          echo "🔨 Building and deploying local code using make update-kind-image..."
+          make update-kind-image
 
           # Verify pods are using the local image
-          echo "🔍 Verifying pods are using local image..."
-          kubectl get pods -n $NAMESPACE -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[*].image}{"\n"}{end}' | grep -E "(processor|api|recommendation|housekeeper|partition)" || true
-          echo "✅ Image verification completed"
+          echo "✅ Verifying pods are using local image..."
+          kubectl get pods -n ${{ env.NAMESPACE }} -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[*].image}{" (pullPolicy: "}{.spec.containers[*].imagePullPolicy}{")"}{"\n"}{end}' | grep insights-ros-ingress || true
 
-      - name: Wait for services to stabilize and verify authentication
+      - name: Wait for services to stabilize
         run: |
-          echo "Waiting for services to stabilize..."
-          sleep 60
-
-          # Verify authentication setup was created by deploy-kind.sh
-          if [ -f "/tmp/dev-kubeconfig" ]; then
-            echo "✅ Authentication kubeconfig found at /tmp/dev-kubeconfig"
-          else
-            echo "❌ Authentication kubeconfig not found"
-            echo "Expected file: /tmp/dev-kubeconfig"
-            echo "This should have been created by deploy-kind.sh"
-            ls -la /tmp/ | grep -E "(kubeconfig|auth)" || true
-          fi
-
-          # Check if service account exists
-          if kubectl get serviceaccount insights-ros-ingress -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
-            echo "✅ insights-ros-ingress service account found"
-
-            # Check if token secret exists
-            if kubectl get secret insights-ros-ingress-token -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
-              echo "✅ insights-ros-ingress-token secret found"
-            else
-              echo "❌ insights-ros-ingress-token secret not found"
-              kubectl get secrets -n ${{ env.NAMESPACE }} | head -10 || true
-            fi
-          else
-            echo "❌ insights-ros-ingress service account not found"
-            kubectl get serviceaccounts -n ${{ env.NAMESPACE }} || true
-          fi
+          echo "⏳ Waiting for all pods to be ready..."
 
           # Wait for all pods to be in Running state
-          timeout 600 bash -c "until kubectl wait --for=condition=ready pod -l 'app.kubernetes.io/instance=${{ env.HELM_RELEASE_NAME }}' -n ${{ env.NAMESPACE }} --timeout=30s; do echo 'Waiting for pods...'; sleep 10; done"
+          timeout 600 bash -c "until kubectl wait --for=condition=ready pod -l 'app.kubernetes.io/instance=${{ env.HELM_RELEASE_NAME }}' -n ${{ env.NAMESPACE }} --timeout=30s 2>/dev/null; do echo 'Waiting for pods...'; sleep 10; done"
 
           # Additional wait for services to fully initialize
-          echo "All pods ready, waiting additional 30 seconds for service initialization..."
+          echo "✅ All pods ready, waiting additional 30 seconds for service initialization..."
           sleep 30
+
+          # Show final pod status
+          echo "📊 Final pod status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
 
       - name: Verify cluster and services health
         run: |

@@ -21,53 +21,84 @@ The Insights ROS Ingress service processes file uploads and validates them for t
 ```
 deployments/kubernetes/
 ├── scripts/
-│   ├── deploy-kind.sh              # KIND cluster deployment script
-│   ├── install-helm-chart.sh       # Helm chart installation (pulls from GitHub)
-│   ├── test-k8s-dataflow.sh        # Kubernetes dataflow testing script
-│   └── cleanup-kind-artifacts.sh   # Cleanup script for KIND
+│   ├── test-k8s-dataflow.sh        # Kubernetes dataflow testing script (local)
+│   ├── update-kind-image.sh        # Build and deploy local code changes to KIND (local)
+│   └── cleanup-kind-artifacts.sh   # Cleanup script for KIND (local)
 └── README.md                       # This file
 ```
 
-**Note:** The Helm chart is maintained in a separate repository: [insights-onprem/ros-helm-chart](https://github.com/insights-onprem/ros-helm-chart)
+**Important Notes:**
+- The Helm chart is maintained in a separate repository: [insights-onprem/ros-helm-chart](https://github.com/insights-onprem/ros-helm-chart)
+- Deployment scripts (`deploy-kind.sh`, `install-helm-chart.sh`) are **always downloaded fresh** from the ros-helm-chart repository via Makefile targets to ensure you're using the latest authoritative versions
+- Use `make deploy-kind` and `make helm-install` instead of running scripts directly
 
 ## Quick Start
 
 ### Prerequisites
 
 Install the following tools:
-- [KIND](https://kind.sigs.k8s.io/) - Kubernetes in Docker
+- [Podman](https://podman.io/) - Container engine (recommended, daemonless)
+- [KIND](https://kind.sigs.k8s.io/) - Kubernetes in Docker/Podman
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) - Kubernetes CLI
 - [Helm](https://helm.sh/) - Kubernetes package manager
-- [Podman](https://podman.io/) - Container engine (recommended)
 
 **macOS Installation:**
 ```bash
-brew install kind kubectl helm podman
+brew install podman kind kubectl helm
 ```
+
+**Note:** This project uses Podman by default instead of Docker for better security (daemonless, rootless) and compatibility. Docker can be used as an alternative by setting `CONTAINER_RUNTIME=docker`.
 
 ### Deploy to KIND
 
-1. **Create and deploy to KIND cluster:**
-   ```bash
-   ./deployments/kubernetes/scripts/deploy-kind.sh
-   ```
-   
-   This script will:
-   - Create a KIND cluster if it doesn't exist
-   - Install the Helm chart from GitHub (pulls latest release automatically)
-   - Configure all necessary services
+#### Option 1: Full Development Setup (Recommended for Development)
 
-2. **Check deployment status:**
+**Quick Start - One Command Setup:**
+```bash
+make deploy-dev
+```
+
+This single command will:
+1. Download and run latest `deploy-kind.sh` to create KIND cluster
+2. Download and run latest `install-helm-chart.sh` to install Helm chart
+3. **Build container image from your current workspace code**
+4. **Load the image into KIND cluster**
+5. **Patch the deployment to use your local code instead of quay.io**
+
+After this completes, your KIND cluster will be running with your latest local code changes!
+
+#### Option 2: Manual Step-by-Step Setup
+
+If you prefer more control over each step:
+
+1. **Create KIND cluster:**
    ```bash
-   ./deployments/kubernetes/scripts/install-helm-chart.sh status
+   make deploy-kind
    ```
 
-3. **Run health checks:**
+2. **Install Helm chart:**
    ```bash
-   ./deployments/kubernetes/scripts/install-helm-chart.sh health
+   make helm-install
    ```
 
-4. **Test the complete dataflow:**
+3. **Update with local code (optional but recommended for development):**
+   ```bash
+   make update-kind-image
+   ```
+
+#### Verify Deployment
+
+1. **Check deployment status:**
+   ```bash
+   make helm-status
+   ```
+
+2. **Run health checks:**
+   ```bash
+   make helm-health
+   ```
+
+3. **Test the complete dataflow:**
    ```bash
    ./deployments/kubernetes/scripts/test-k8s-dataflow.sh
    ```
@@ -106,7 +137,7 @@ minio:
 EOF
 
 # Deploy with custom values
-VALUES_FILE=my-values.yaml ./deployments/kubernetes/scripts/install-helm-chart.sh
+VALUES_FILE=my-values.yaml make helm-install
 ```
 
 ### Environment Variables
@@ -130,7 +161,7 @@ image:
   tag: your-tag
 EOF
 
-VALUES_FILE=custom-image-values.yaml ./deployments/kubernetes/scripts/install-helm-chart.sh
+VALUES_FILE=custom-image-values.yaml make helm-install
 ```
 
 ## Development Workflow
@@ -141,32 +172,93 @@ VALUES_FILE=custom-image-values.yaml ./deployments/kubernetes/scripts/install-he
    ```bash
    # Build the application
    make build
-   
-   # Run integration tests
-   make test-integration
+
+   # Run unit tests
+   make test
    ```
 
 2. **Deploy to KIND:**
    ```bash
-   ./deployments/kubernetes/scripts/deploy-kind.sh
+   make deploy-kind
    ```
 
-3. **Test the deployment:**
+3. **Test local code changes in KIND:**
+   ```bash
+   # Build container image from current workspace and update KIND deployment
+   make update-kind-image
+
+   # This will:
+   # - Build container image from your current code
+   # - Load it into the KIND cluster
+   # - Patch the deployment to use the new image
+   # - Wait for rollout to complete
+   ```
+
+4. **Test the deployment:**
    ```bash
    ./deployments/kubernetes/scripts/test-k8s-dataflow.sh
    ```
 
-4. **View logs:**
+5. **View logs:**
    ```bash
-   kubectl logs -n insights-ros-ingress -l app.kubernetes.io/instance=insights-ros-ingress -f
+   kubectl logs -n ros-ocp -l app.kubernetes.io/name=insights-ros-ingress -f
    ```
+
+### Iterative Development Workflow
+
+For rapid development and testing:
+
+```bash
+# 1. Initial setup (once) - sets up KIND with your current code
+make deploy-dev
+
+# 2. Make code changes
+# ... edit your code ...
+
+# 3. Update running deployment with your changes
+make update-kind-image
+
+# 4. Test your changes
+./deployments/kubernetes/scripts/test-k8s-dataflow.sh
+
+# 5. View logs if needed
+kubectl logs -n ros-ocp -l app.kubernetes.io/name=insights-ros-ingress -f
+
+# 6. Repeat steps 2-5 as needed
+```
+
+**Why `make deploy-dev`?**
+- ✅ Automatically uses your local code instead of pulling from quay.io
+- ✅ Faster iteration - no need to push images to remote registry
+- ✅ Test your changes immediately in a Kubernetes environment
+- ✅ Complete setup in one command
+
+**Advanced Options:**
+
+```bash
+# Use custom image tag
+IMAGE_TAG=my-feature make update-kind-image
+
+# Use custom namespace
+NAMESPACE=my-namespace make update-kind-image
+
+# Skip building (if image already exists)
+./deployments/kubernetes/scripts/update-kind-image.sh --skip-build
+
+# Only show current deployment status
+./deployments/kubernetes/scripts/update-kind-image.sh --status-only
+
+# Use Docker instead of Podman (if needed)
+# Note: Podman is the default and recommended container runtime
+CONTAINER_RUNTIME=docker make update-kind-image
+```
 
 ### Updating the Deployment
 
 1. **Update to latest Helm chart:**
    ```bash
-   # The script automatically pulls the latest chart from GitHub
-   ./deployments/kubernetes/scripts/install-helm-chart.sh
+   # Always pulls the latest authoritative script and chart from ros-helm-chart
+   make helm-install
    ```
 
 2. **Update with custom image version:**
@@ -175,8 +267,8 @@ VALUES_FILE=custom-image-values.yaml ./deployments/kubernetes/scripts/install-he
    image:
      tag: new-version
    EOF
-   
-   VALUES_FILE=update-values.yaml ./deployments/kubernetes/scripts/install-helm-chart.sh
+
+   VALUES_FILE=update-values.yaml make helm-install
    ```
 
 3. **Rolling restart:**
@@ -263,10 +355,11 @@ helm get values insights-ros-ingress -n insights-ros-ingress
 
 ```bash
 # Remove Helm release only (preserves PVs)
-./deployments/kubernetes/scripts/install-helm-chart.sh cleanup
+make helm-cleanup
 
 # Complete cleanup including Persistent Volumes
-./deployments/kubernetes/scripts/install-helm-chart.sh cleanup --complete
+# Note: Pass arguments by downloading script directly or use kubectl
+kubectl delete namespace ros-ocp
 
 # Remove entire KIND cluster
 kind delete cluster --name ros-ocp-cluster
@@ -289,7 +382,7 @@ kind delete cluster --name ros-ocp-cluster
 
 When deploying to production environments:
 
-1. **Security**: 
+1. **Security**:
    - Use proper authentication and authorization
    - Enable TLS for all communications
    - Use Kubernetes secrets for sensitive data

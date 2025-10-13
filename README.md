@@ -317,11 +317,14 @@ make run
 The Helm chart is pulled from the [ros-helm-chart](https://github.com/insights-onprem/ros-helm-chart) repository:
 
 ```bash
-# Deploy using the installation script (recommended)
-./deployments/kubernetes/scripts/install-helm-chart.sh
+# Full development setup: KIND cluster + Helm chart + local code (recommended for development)
+make deploy-dev
 
-# Or manually with latest release from GitHub
-# The script automatically downloads and installs the latest chart
+# Or deploy Helm chart only (uses image from registry)
+make helm-install
+
+# Update existing deployment with local code changes
+make update-kind-image
 ```
 
 ## Configuration

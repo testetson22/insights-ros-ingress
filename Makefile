@@ -248,27 +248,95 @@ install-tools: ## Install required development tools
 		go install github.com/golang/mock/mockgen@latest; \
 	}
 
+# Script management - always downloads fresh authoritative scripts from ros-helm-chart repository
+ROS_HELM_CHART_SCRIPTS_URL := https://raw.githubusercontent.com/insights-onprem/ros-helm-chart/main/scripts
+
+.PHONY: deploy-kind
+deploy-kind: ## Deploy KIND cluster using authoritative script from ros-helm-chart
+	@echo "📥 Downloading latest deploy-kind.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/deploy-kind.sh -o /tmp/deploy-kind.sh
+	@chmod +x /tmp/deploy-kind.sh
+	@echo "🚀 Deploying KIND cluster..."
+	@export KIND_EXPERIMENTAL_PROVIDER=$${KIND_EXPERIMENTAL_PROVIDER:-podman}; \
+		/tmp/deploy-kind.sh
+	@rm -f /tmp/deploy-kind.sh
+
+.PHONY: update-kind-image
+update-kind-image: ## Build and update KIND cluster with local image for testing
+	@echo "🔨 Building and updating KIND cluster with local image..."
+	@export KIND_EXPERIMENTAL_PROVIDER=$${KIND_EXPERIMENTAL_PROVIDER:-podman}; \
+		./deployments/kubernetes/scripts/update-kind-image.sh
+
+.PHONY: test-dataflow
+test-dataflow: ## Run Kubernetes dataflow integration tests
+	@echo "🧪 Running Kubernetes dataflow tests..."
+	@./deployments/kubernetes/scripts/test-k8s-dataflow.sh
+
+.PHONY: deploy-dev
+deploy-dev: ## Deploy KIND cluster with Helm chart and local code (full dev setup)
+	@echo "🚀 Setting up complete development environment..."
+	@echo ""
+	@echo "Step 1/3: Deploying KIND cluster..."
+	@$(MAKE) deploy-kind
+	@echo ""
+	@echo "Step 2/3: Installing Helm chart..."
+	@$(MAKE) helm-install
+	@echo ""
+	@echo "Step 3/3: Building and deploying local code..."
+	@$(MAKE) update-kind-image
+	@echo ""
+	@echo "✅ Development environment ready!"
+	@echo "Next: Run tests with make test-dataflow"
+
 .PHONY: helm-install
-helm-install: ## Install Helm chart from GitHub repository
-	@echo "Installing Helm chart from GitHub repository..."
-	./deployments/kubernetes/scripts/install-helm-chart.sh
+helm-install: ## Install Helm chart using authoritative script from ros-helm-chart
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
+	@echo "📦 Installing Helm chart..."
+	@/tmp/install-helm-chart.sh
+	@rm -f /tmp/install-helm-chart.sh
 
 .PHONY: helm-status
-helm-status: ## Show Helm deployment status
-	@echo "Showing Helm deployment status..."
-	./deployments/kubernetes/scripts/install-helm-chart.sh status
+helm-status: ## Show Helm deployment status using authoritative script
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
+	@echo "📊 Showing Helm deployment status..."
+	@/tmp/install-helm-chart.sh status
+	@rm -f /tmp/install-helm-chart.sh
 
 .PHONY: helm-cleanup
-helm-cleanup: ## Cleanup Helm deployment
-	@echo "Cleaning up Helm deployment..."
-	./deployments/kubernetes/scripts/install-helm-chart.sh cleanup
+helm-cleanup: ## Cleanup Helm deployment using authoritative script
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
+	@echo "🧹 Cleaning up Helm deployment..."
+	@/tmp/install-helm-chart.sh cleanup
+	@rm -f /tmp/install-helm-chart.sh
+
+.PHONY: helm-health
+helm-health: ## Run health checks using authoritative script
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
+	@echo "🏥 Running health checks..."
+	@/tmp/install-helm-chart.sh health
+	@rm -f /tmp/install-helm-chart.sh
 
 .PHONY: security-scan
 security-scan: ## Run security scan on container image
-	@echo "Running security scan..."
-	podman run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-		-v $$(pwd):/root/.cache/ \
-		aquasec/trivy:latest image $(IMAGE_NAME)
+	@echo "Running security scan with podman..."
+	@if [ -S /run/podman/podman.sock ]; then \
+		podman run --rm -v /run/podman/podman.sock:/var/run/docker.sock:ro \
+			-v $$(pwd):/root/.cache/ \
+			aquasec/trivy:latest image $(IMAGE_NAME); \
+	else \
+		echo "Using podman image directly (no socket mount needed)"; \
+		podman run --rm --security-opt label=disable \
+			-v $$(pwd):/root/.cache/ \
+			aquasec/trivy:latest image $(IMAGE_NAME); \
+	fi
 
 .PHONY: check
 check: fmt vet lint test ## Run all checks (format, vet, lint, test)
@@ -297,19 +365,26 @@ debug: ## Build and run with debugging
 
 # OpenShift deployment helpers
 .PHONY: oc-deploy
-oc-deploy: build-image ## Deploy to OpenShift
+oc-deploy: build-image ## Deploy to OpenShift using authoritative script
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
 	@echo "Deploying to OpenShift..."
 	@echo "Creating custom values file for image override..."
 	@echo "image:" > /tmp/oc-deploy-values.yaml
 	@echo "  repository: $(REGISTRY)/$(APP_NAME)" >> /tmp/oc-deploy-values.yaml
 	@echo "  tag: $(VERSION)" >> /tmp/oc-deploy-values.yaml
-	NAMESPACE=insights-ros VALUES_FILE=/tmp/oc-deploy-values.yaml ./deployments/kubernetes/scripts/install-helm-chart.sh
-	@rm -f /tmp/oc-deploy-values.yaml
+	NAMESPACE=insights-ros VALUES_FILE=/tmp/oc-deploy-values.yaml /tmp/install-helm-chart.sh
+	@rm -f /tmp/oc-deploy-values.yaml /tmp/install-helm-chart.sh
 
 .PHONY: oc-undeploy
-oc-undeploy: ## Remove from OpenShift
+oc-undeploy: ## Remove from OpenShift using authoritative script
+	@echo "📥 Downloading latest install-helm-chart.sh from ros-helm-chart..."
+	@curl -fsSL $(ROS_HELM_CHART_SCRIPTS_URL)/install-helm-chart.sh -o /tmp/install-helm-chart.sh
+	@chmod +x /tmp/install-helm-chart.sh
 	@echo "Removing from OpenShift..."
-	NAMESPACE=insights-ros ./deployments/kubernetes/scripts/install-helm-chart.sh cleanup
+	NAMESPACE=insights-ros /tmp/install-helm-chart.sh cleanup
+	@rm -f /tmp/install-helm-chart.sh
 
 # Default target
 .DEFAULT_GOAL := help
