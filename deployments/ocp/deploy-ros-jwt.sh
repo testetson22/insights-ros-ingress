@@ -403,7 +403,14 @@ deploy_strimzi() {
     # Export environment variables for Strimzi script
     export KAFKA_NAMESPACE="${NAMESPACE}"
     export KAFKA_ENVIRONMENT="ocp"
-    export STORAGE_CLASS="ocs-storagecluster-ceph-rbd"
+    
+    # Use existing STORAGE_CLASS if set, otherwise default to OCS Ceph RBD
+    if [[ -z "${STORAGE_CLASS:-}" ]]; then
+        export STORAGE_CLASS="ocs-storagecluster-ceph-rbd"
+        log_verbose "Using default storage class: ${STORAGE_CLASS}"
+    else
+        log_verbose "Using existing storage class: ${STORAGE_CLASS}"
+    fi
     
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
