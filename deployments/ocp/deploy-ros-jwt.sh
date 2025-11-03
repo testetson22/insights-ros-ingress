@@ -403,6 +403,7 @@ deploy_strimzi() {
     # Export environment variables for Strimzi script
     export KAFKA_NAMESPACE="${NAMESPACE}"
     export KAFKA_ENVIRONMENT="ocp"
+    export STORAGE_CLASS="ocs-storagecluster-ceph-rbd"
     
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
