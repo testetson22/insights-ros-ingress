@@ -20,6 +20,7 @@ set -euo pipefail
 #   --skip-helm               Skip ROS Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
 #   --skip-test               Skip JWT authentication test
+#   --skip-image-override     Skip creating custom values file for image override
 #   --namespace NAME          Target namespace (default: ros-ocp)
 #   --image-tag TAG           Custom image tag for insights-ros-ingress
 #   --use-local-chart         Use local Helm chart instead of GitHub release
@@ -71,7 +72,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 NAMESPACE="${NAMESPACE:-ros-ocp}"
 IMAGE_REGISTRY="${IMAGE_REGISTRY:-quay.io}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-insights-onprem/insights-ros-ingress}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+IMAGE_TAG="${IMAGE_TAG:-main}"
 USE_LOCAL_CHART="${USE_LOCAL_CHART:-false}"
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -100,6 +101,7 @@ SKIP_AUTHORINO=false
 SKIP_HELM=false
 SKIP_TLS=false
 SKIP_TEST=false
+SKIP_IMAGE_OVERRIDE=false
 
 # Temporary directory for downloaded scripts
 TEMP_DIR=$(mktemp -d)
@@ -465,14 +467,18 @@ deploy_helm_chart() {
     
     download_script "${SCRIPT_INSTALL_HELM}"
     
-    # Create custom values file for image override
-    local values_file="${TEMP_DIR}/custom-values.yaml"
-    create_helm_values_file "${values_file}"
+    # Create custom values file for image override (unless skipped)
+    if [[ "${SKIP_IMAGE_OVERRIDE}" == "false" ]]; then
+        local values_file="${TEMP_DIR}/custom-values.yaml"
+        create_helm_values_file "${values_file}"
+        export VALUES_FILE="${values_file}"
+    else
+        log_info "Skipping custom values file creation (--skip-image-override)"
+    fi
     
     # Export environment variables for Helm script
     export NAMESPACE="${NAMESPACE}"
     export JWT_AUTH_ENABLED="true"
-    export VALUES_FILE="${values_file}"
     export USE_LOCAL_CHART="${USE_LOCAL_CHART}"
     
     if [[ "${VERBOSE}" == "true" ]]; then
@@ -610,6 +616,7 @@ print_summary() {
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy ROS Helm Chart" || echo "  ✗ Deploy ROS Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
+    [[ "${SKIP_IMAGE_OVERRIDE}" == "false" ]] && echo "  ✓ Create Image Override Values" || echo "  ✗ Create Image Override Values (SKIPPED)"
     echo ""
 }
 
@@ -656,6 +663,10 @@ main() {
                 ;;
             --skip-test)
                 SKIP_TEST=true
+                shift
+                ;;
+            --skip-image-override)
+                SKIP_IMAGE_OVERRIDE=true
                 shift
                 ;;
             --namespace)

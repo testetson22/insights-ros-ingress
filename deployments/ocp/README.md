@@ -53,6 +53,7 @@ The script deploys in this order (each can be skipped):
 --skip-helm            Skip ROS Helm chart installation
 --skip-tls             Skip TLS certificate setup
 --skip-test            Skip JWT authentication test
+--skip-image-override  Skip creating custom values file for image override
 --namespace NAME       Target namespace (default: ros-ocp)
 --image-tag TAG        Custom image tag
 --use-local-chart      Use local Helm chart
