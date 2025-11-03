@@ -64,7 +64,7 @@ set -euo pipefail
 ################################################################################
 
 # Script metadata
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -382,12 +382,14 @@ deploy_rhsso() {
     
     download_script "${SCRIPT_DEPLOY_RHSSO}"
     
-    local args=("--namespace" "${NAMESPACE}")
+    # Export environment variables for RHSSO script
+    export NAMESPACE="${NAMESPACE}"
+    
     if [[ "${VERBOSE}" == "true" ]]; then
-        args+=("--verbose")
+        export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_DEPLOY_RHSSO}" "${args[@]}"
+    execute_script "${SCRIPT_DEPLOY_RHSSO}"
     
     log_success "RHSSO/Keycloak deployment completed"
 }
@@ -540,12 +542,14 @@ setup_tls() {
     
     download_script "${SCRIPT_SETUP_TLS}"
     
-    local args=("-n" "${NAMESPACE}")
+    # Export environment variables for TLS script
+    export NAMESPACE="${NAMESPACE}"
+    
     if [[ "${VERBOSE}" == "true" ]]; then
-        args+=("-v")
+        export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_SETUP_TLS}" "${args[@]}"
+    execute_script "${SCRIPT_SETUP_TLS}"
     
     log_success "TLS certificate setup completed"
 }
@@ -560,12 +564,14 @@ test_jwt_flow() {
     
     download_script "${SCRIPT_TEST_JWT}"
     
-    local args=("--namespace" "${NAMESPACE}")
+    # Export environment variables for JWT test script
+    export NAMESPACE="${NAMESPACE}"
+    
     if [[ "${VERBOSE}" == "true" ]]; then
-        args+=("--verbose")
+        export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_TEST_JWT}" "${args[@]}"
+    execute_script "${SCRIPT_TEST_JWT}"
     
     log_success "JWT authentication test completed"
 }
