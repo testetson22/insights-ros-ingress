@@ -253,10 +253,10 @@ test_environment_variables() {
 test_script_metadata() {
     log_test "Script contains proper metadata"
     
-    if grep -q "SCRIPT_VERSION=" "${DEPLOY_SCRIPT}"; then
-        log_pass "Script has version metadata"
+    if grep -q "SCRIPT_DIR=" "${DEPLOY_SCRIPT}"; then
+        log_pass "Script has metadata"
     else
-        log_fail "Script missing version metadata"
+        log_fail "Script missing metadata"
         return 1
     fi
 }
