@@ -424,7 +424,24 @@ deploy_authorino() {
     
     log_step "Deploying Authorino OAuth2 (3/6)"
     
-    download_script "${SCRIPT_INSTALL_AUTHORINO}"
+    # Download Authorino update script from GitLab snippet
+    local authorino_script="${TEMP_DIR}/authorinoupdate.sh"
+    local authorino_url="https://gitlab.cee.redhat.com/-/snippets/10530/raw/main/authorinoupdate.sh"
+    
+    log_verbose "Downloading: ${authorino_url}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would download authorinoupdate.sh from GitLab"
+        touch "${authorino_script}"
+        chmod +x "${authorino_script}"
+    else
+        if ! curl -fsSL "${authorino_url}" -o "${authorino_script}"; then
+            log_error "Failed to download authorinoupdate.sh from GitLab"
+            return 1
+        fi
+        chmod +x "${authorino_script}"
+        log_verbose "Downloaded to: ${authorino_script}"
+    fi
     
     # Export environment variables for Authorino script
     export NAMESPACE="${NAMESPACE}"
@@ -433,7 +450,7 @@ deploy_authorino() {
         export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_INSTALL_AUTHORINO}"
+    execute_script "$(basename "${authorino_script}")"
     
     log_success "Authorino deployment completed"
 }
