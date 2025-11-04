@@ -340,11 +340,14 @@ execute_script() {
     
     log_info "Executing: ${script_name} $*"
     
+    local exit_code=0
     if [[ "${VERBOSE}" == "true" ]]; then
-        bash -x "${script_path}" "$@"
+        bash -x "${script_path}" "$@" || exit_code=$?
     else
-        "${script_path}" "$@"
+        "${script_path}" "$@" || exit_code=$?
     fi
+    
+    return ${exit_code}
 }
 
 create_namespace() {
@@ -497,7 +500,19 @@ deploy_helm_chart() {
         export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_INSTALL_HELM}"
+    if ! execute_script "${SCRIPT_INSTALL_HELM}"; then
+        log_error "Helm chart deployment failed"
+        log_error ""
+        log_error "Deployment has been stopped. To troubleshoot:"
+        log_error "  1. Check Helm release status: helm list -n ${NAMESPACE}"
+        log_error "  2. Check pod status: oc get pods -n ${NAMESPACE}"
+        log_error "  3. View pod logs: oc logs -n ${NAMESPACE} <pod-name>"
+        log_error "  4. Check events: oc get events -n ${NAMESPACE} --sort-by='.lastTimestamp'"
+        log_error ""
+        log_error "To retry deployment after fixing issues:"
+        log_error "  ./deploy-ros-jwt.sh --skip-rhbk --skip-strimzi --skip-authorino"
+        return 1
+    fi
     
     log_success "ROS Helm chart deployment completed"
 }
@@ -697,7 +712,15 @@ main() {
     deploy_rhbk
     deploy_strimzi
     deploy_authorino
-    deploy_helm_chart
+    
+    # Helm deployment is critical - exit if it fails
+    if ! deploy_helm_chart; then
+        log_error ""
+        log_error "Deployment failed at Helm chart installation step"
+        log_error "Exiting to prevent further issues"
+        exit 1
+    fi
+    
     setup_tls
     test_jwt_flow
     
