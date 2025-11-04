@@ -78,8 +78,10 @@ OPENSHIFT_PASSWORD       # Password (auto-detected from files)
 ```bash
 IMAGE_REGISTRY           # Image registry (default: quay.io)
 IMAGE_REPOSITORY         # Repository (default: insights-onprem/insights-ros-ingress)
-IMAGE_TAG                # Image tag (default: latest)
+IMAGE_TAG                # Image tag (default: main)
 ```
+
+**Note:** The script downloads the official `openshift-values.yaml` from the ros-helm-chart repository as the base configuration. By default, it passes image override settings via Helm `--set` flags to use your specified image. Use `--skip-image-override` to use the chart's default image without any override.
 
 ### Deployment Options
 ```bash
@@ -87,6 +89,30 @@ NAMESPACE                # Target namespace (default: ros-ocp)
 USE_LOCAL_CHART          # Use local chart (default: false)
 VERBOSE                  # Verbose output (default: false)
 DRY_RUN                  # Dry-run mode (default: false)
+```
+
+## How It Works
+
+### Values File and Image Override
+
+The script uses a two-layer configuration approach:
+
+1. **Base Configuration**: Downloads the official `openshift-values.yaml` from the ros-helm-chart repository
+2. **Image Override**: Passes custom image settings via Helm `--set` flags (when not skipped)
+
+This approach keeps the official values file pristine while allowing image customization:
+
+```bash
+# With image override (default)
+helm upgrade --install ros-ocp <chart> \
+  -f openshift-values.yaml \
+  --set ingress.image.repository=quay.io/insights-onprem/insights-ros-ingress \
+  --set ingress.image.tag=main \
+  --set ingress.image.pullPolicy=Always
+
+# Without image override (--skip-image-override)
+helm upgrade --install ros-ocp <chart> \
+  -f openshift-values.yaml
 ```
 
 ## Common Usage Patterns
