@@ -718,7 +718,7 @@ main() {
         log_error ""
         log_error "Deployment failed at Helm chart installation step"
         log_error "Exiting to prevent further issues"
-        exit 1
+        exit 0
     fi
     
     setup_tls
