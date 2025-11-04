@@ -386,5 +386,23 @@ oc-undeploy: ## Remove from OpenShift using authoritative script
 	NAMESPACE=insights-ros /tmp/install-helm-chart.sh cleanup
 	@rm -f /tmp/install-helm-chart.sh
 
+.PHONY: oc-deploy-test
+oc-deploy-test: ## Deploy ROS test environment with JWT authentication on OpenShift
+	@echo "🚀 Deploying ROS test environment to OpenShift..."
+	@echo ""
+	IMAGE_TAG=$(VERSION) \
+	IMAGE_REGISTRY=$(REGISTRY) \
+	IMAGE_REPOSITORY=$(APP_NAME) \
+	./deployments/ocp/deploy-test-ros.sh
+
+.PHONY: oc-deploy-test-dry-run
+oc-deploy-test-dry-run: ## Dry run of ROS test deployment (preview actions without executing)
+	@echo "🔍 Dry run: ROS test deployment to OpenShift..."
+	@echo ""
+	IMAGE_TAG=$(VERSION) \
+	IMAGE_REGISTRY=$(REGISTRY) \
+	IMAGE_REPOSITORY=$(APP_NAME) \
+	./deployments/ocp/deploy-test-ros.sh --dry-run --verbose
+
 # Default target
 .DEFAULT_GOAL := help
