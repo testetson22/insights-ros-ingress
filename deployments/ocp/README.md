@@ -14,7 +14,7 @@ export KUBEADMIN_PASSWORD_FILE=/path/to/kubeadmin-password
 export SHARED_DIR=/path/to/shared  # Contains kubeadmin-password
 
 # Deploy
-./deploy-ros-jwt.sh --image-tag main-abc123
+./deploy-test-ros.sh --image-tag main-abc123
 ```
 
 ## Features
@@ -47,7 +47,7 @@ The script deploys in this order (each can be skipped):
 ## Command-Line Options
 
 ```bash
-./deploy-ros-jwt.sh [OPTIONS]
+./deploy-test-ros.sh [OPTIONS]
 
 --skip-rhbk            Skip Red Hat Build of Keycloak (RHBK) deployment
 --skip-strimzi         Skip Kafka/Strimzi deployment
@@ -121,12 +121,12 @@ helm upgrade --install ros-ocp <chart> \
 
 ### Full Deployment
 ```bash
-./deploy-ros-jwt.sh --image-tag main-abc123 --verbose
+./deploy-test-ros.sh --image-tag main-abc123 --verbose
 ```
 
 ### Update Only ROS Application
 ```bash
-./deploy-ros-jwt.sh \
+./deploy-test-ros.sh \
     --skip-rhbk \
     --skip-strimzi \
     --skip-authorino \
@@ -137,7 +137,7 @@ helm upgrade --install ros-ocp <chart> \
 
 ### Dry Run
 ```bash
-./deploy-ros-jwt.sh --dry-run --verbose
+./deploy-test-ros.sh --dry-run --verbose
 ```
 
 ### CI/CD Integration
@@ -147,7 +147,7 @@ export KUBECONFIG="${KUBECONFIG}"
 export KUBEADMIN_PASSWORD_FILE="${KUBEADMIN_PASSWORD_FILE}"
 export IMAGE_TAG="main-${GITHUB_SHA}"
 
-./deployments/ocp/deploy-ros-jwt.sh \
+./deployments/ocp/deploy-test-ros.sh \
     --image-tag "${IMAGE_TAG}" \
     --namespace ros-ocp \
     --skip-test
@@ -204,14 +204,14 @@ curl -k "https://${ROUTE_HOST}/api/ingress/v1/health"
 ### Resume Failed Deployment
 ```bash
 # Skip already-deployed components
-./deploy-ros-jwt.sh --skip-rhbk --skip-strimzi
+./deploy-test-ros.sh --skip-rhbk --skip-strimzi
 ```
 
 ### Manual Login
 ```bash
 # If auto-login fails
 oc login https://api.example.com:6443
-./deploy-ros-jwt.sh
+./deploy-test-ros.sh
 ```
 
 ## Architecture
@@ -240,7 +240,7 @@ oc login https://api.example.com:6443
 
 ## Testing
 
-Run the following script to essentially execute a dry-run validation of the `deploy-ros-jwt.sh` script:
+Run the following script to essentially execute a dry-run validation of the `deploy-test-ros.sh` script:
 
 ```bash
 ./test-script.sh

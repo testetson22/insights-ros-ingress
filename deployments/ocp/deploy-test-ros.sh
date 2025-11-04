@@ -11,7 +11,7 @@ set -euo pipefail
 # Section: JWT Authentication Setup
 #
 # Usage:
-#   ./deploy-ros-jwt.sh [OPTIONS]
+#   ./deploy-test-ros.sh [OPTIONS]
 #
 # Options:
 #   --skip-rhbk               Skip Red Hat Build of Keycloak (RHBK) deployment
@@ -54,13 +54,13 @@ set -euo pipefail
 #
 # Example:
 #   # Full deployment with custom image
-#   ./deploy-ros-jwt.sh --image-tag main-abc123
+#   ./deploy-test-ros.sh --image-tag main-abc123
 #
-#   # Skip RHSSO if already deployed
-#   ./deploy-ros-jwt.sh --skip-rhsso --namespace ros-production
+#   # Skip RHBK if already deployed
+#   ./deploy-test-ros.sh --skip-rhbk --namespace ros-production
 #
 #   # Dry run to preview actions
-#   ./deploy-ros-jwt.sh --dry-run --verbose
+#   ./deploy-test-ros.sh --dry-run --verbose
 #
 ################################################################################
 
@@ -529,7 +529,7 @@ download_openshift_values() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         log_info "DRY RUN: Would download openshift-values.yaml"
         # Create a minimal placeholder for dry-run
-        cat > "${values_file}" <<EOF
+        cat > "${values_file}" <<'EOF'
 # DRY RUN: Would use openshift-values.yaml from ros-helm-chart repo
 global:
   storageClass: ""
