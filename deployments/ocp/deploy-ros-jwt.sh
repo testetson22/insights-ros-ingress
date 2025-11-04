@@ -715,9 +715,10 @@ main() {
     
     # Helm deployment is critical - exit if it fails
     if ! deploy_helm_chart; then
-        log_error ""
-        log_error "Deployment failed at Helm chart installation step"
-        log_error "Exiting to prevent further issues"
+        log_warning "--------------------------------"
+        log_warning "Deployment failed at Helm chart installation step"
+        log_warning "Exiting to prevent further issues"
+        log_warning "--------------------------------"
         exit 0
     fi
     
