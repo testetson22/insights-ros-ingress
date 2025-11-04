@@ -2,6 +2,8 @@
 
 Automated deployment script for ROS Ingress on OpenShift with JWT authentication.
 
+> **Note**: This script uses **Red Hat Build of Keycloak (RHBK)**, aligning with the [upstream ros-helm-chart repository](https://github.com/insights-onprem/ros-helm-chart). RHBK v22+ with `k8s.keycloak.org/v2alpha1` API is the supported Keycloak operator.
+
 ## Quick Start
 
 ```bash
@@ -47,7 +49,7 @@ The script deploys in this order (each can be skipped):
 ```bash
 ./deploy-ros-jwt.sh [OPTIONS]
 
---skip-rhsso           Skip RHSSO/Keycloak deployment
+--skip-rhbk            Skip Red Hat Build of Keycloak (RHBK) deployment
 --skip-strimzi         Skip Kafka/Strimzi deployment
 --skip-authorino       Skip Authorino OAuth2 deployment
 --skip-helm            Skip ROS Helm chart installation
@@ -125,7 +127,7 @@ helm upgrade --install ros-ocp <chart> \
 ### Update Only ROS Application
 ```bash
 ./deploy-ros-jwt.sh \
-    --skip-rhsso \
+    --skip-rhbk \
     --skip-strimzi \
     --skip-authorino \
     --skip-tls \
@@ -202,7 +204,7 @@ curl -k "https://${ROUTE_HOST}/api/ingress/v1/health"
 ### Resume Failed Deployment
 ```bash
 # Skip already-deployed components
-./deploy-ros-jwt.sh --skip-rhsso --skip-strimzi
+./deploy-ros-jwt.sh --skip-rhbk --skip-strimzi
 ```
 
 ### Manual Login
@@ -221,7 +223,7 @@ oc login https://api.example.com:6443
 │  ┌────────────────────────────────┐    │
 │  │  Namespace: ros-ocp             │    │
 │  │                                  │    │
-│  │  RHSSO/Keycloak                 │    │
+│  │  RHBK (Keycloak)                │    │
 │  │       ↓                          │    │
 │  │  Authorino (OAuth2)             │    │
 │  │       ↓                          │    │

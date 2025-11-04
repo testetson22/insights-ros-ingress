@@ -14,7 +14,7 @@ set -euo pipefail
 #   ./deploy-ros-jwt.sh [OPTIONS]
 #
 # Options:
-#   --skip-rhsso              Skip RHSSO/Keycloak deployment
+#   --skip-rhbk               Skip Red Hat Build of Keycloak (RHBK) deployment
 #   --skip-strimzi            Skip Kafka/Strimzi deployment
 #   --skip-authorino          Skip Authorino OAuth2 deployment
 #   --skip-helm               Skip ROS Helm chart installation
@@ -88,7 +88,7 @@ SHARED_DIR="${SHARED_DIR:-}"
 # Script URLs from ros-helm-chart repository
 ROS_HELM_CHART_BASE_URL="https://raw.githubusercontent.com/insights-onprem/ros-helm-chart/main"
 ROS_HELM_CHART_SCRIPTS_URL="${ROS_HELM_CHART_BASE_URL}/scripts"
-SCRIPT_DEPLOY_RHSSO="deploy-rhsso.sh"
+SCRIPT_DEPLOY_RHBK="deploy-rhbk.sh"  # Red Hat Build of Keycloak (RHBK)
 SCRIPT_DEPLOY_STRIMZI="deploy-strimzi.sh"
 SCRIPT_INSTALL_AUTHORINO="install-authorino.sh"
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
@@ -97,7 +97,7 @@ SCRIPT_TEST_JWT="test-ocp-dataflow-jwt.sh"
 OPENSHIFT_VALUES_FILE="openshift-values.yaml"
 
 # Step flags (default: run all steps)
-SKIP_RHSSO=false
+SKIP_RHBK=false  # Red Hat Build of Keycloak
 SKIP_STRIMZI=false
 SKIP_AUTHORINO=false
 SKIP_HELM=false
@@ -372,26 +372,26 @@ create_namespace() {
 # Deployment steps
 ################################################################################
 
-deploy_rhsso() {
-    if [[ "${SKIP_RHSSO}" == "true" ]]; then
-        log_warning "Skipping RHSSO/Keycloak deployment (--skip-rhsso)"
+deploy_rhbk() {
+    if [[ "${SKIP_RHBK}" == "true" ]]; then
+        log_warning "Skipping Red Hat Build of Keycloak (RHBK) deployment (--skip-rhbk)"
         return 0
     fi
     
-    log_step "Deploying RHSSO/Keycloak (1/6)"
+    log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/6)"
     
-    download_script "${SCRIPT_DEPLOY_RHSSO}"
+    download_script "${SCRIPT_DEPLOY_RHBK}"
     
-    # Export environment variables for RHSSO script
+    # Export environment variables for RHBK script
     export NAMESPACE="${NAMESPACE}"
     
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_DEPLOY_RHSSO}"
+    execute_script "${SCRIPT_DEPLOY_RHBK}"
     
-    log_success "RHSSO/Keycloak deployment completed"
+    log_success "Red Hat Build of Keycloak (RHBK) deployment completed"
 }
 
 deploy_strimzi() {
@@ -591,7 +591,7 @@ print_summary() {
     echo "  Use Local Chart:     ${USE_LOCAL_CHART}"
     echo ""
     log_info "Steps to execute:"
-    [[ "${SKIP_RHSSO}" == "false" ]] && echo "  ✓ Deploy RHSSO/Keycloak" || echo "  ✗ Deploy RHSSO/Keycloak (SKIPPED)"
+    [[ "${SKIP_RHBK}" == "false" ]] && echo "  ✓ Deploy Red Hat Build of Keycloak (RHBK)" || echo "  ✗ Deploy RHBK (SKIPPED)"
     [[ "${SKIP_STRIMZI}" == "false" ]] && echo "  ✓ Deploy Kafka/Strimzi" || echo "  ✗ Deploy Kafka/Strimzi (SKIPPED)"
     [[ "${SKIP_AUTHORINO}" == "false" ]] && echo "  ✓ Deploy Authorino" || echo "  ✗ Deploy Authorino (SKIPPED)"
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy ROS Helm Chart" || echo "  ✗ Deploy ROS Helm Chart (SKIPPED)"
@@ -622,8 +622,8 @@ main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --skip-rhsso)
-                SKIP_RHSSO=true
+            --skip-rhbk)
+                SKIP_RHBK=true
                 shift
                 ;;
             --skip-strimzi)
@@ -694,7 +694,7 @@ main() {
     check_oc_connection
     create_namespace
     
-    deploy_rhsso
+    deploy_rhbk
     deploy_strimzi
     deploy_authorino
     deploy_helm_chart
