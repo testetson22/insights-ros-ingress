@@ -713,11 +713,10 @@ main() {
     deploy_strimzi
     deploy_authorino
     
-    # Helm deployment is critical - exit if it fails
     if ! deploy_helm_chart; then
         log_warning "--------------------------------"
         log_warning "Deployment failed at Helm chart installation step"
-        log_warning "Exiting to prevent further issues"
+        log_warning "Chart is still in development and may not be stable"
         log_warning "--------------------------------"
         exit 0
     fi
