@@ -724,6 +724,8 @@ main() {
         log_info "DRY RUN completed. No changes were made."
         echo ""
     fi
+    
+    exit 0
 }
 
 # Run main function
