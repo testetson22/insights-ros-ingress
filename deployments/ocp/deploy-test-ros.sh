@@ -392,7 +392,7 @@ deploy_rhbk() {
         export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_DEPLOY_RHBK}" || log_warning "RHBK deployment had issues but continuing..."
+    execute_script "${SCRIPT_DEPLOY_RHBK}" #|| log_warning "RHBK deployment had issues but continuing..."
     
     log_success "Red Hat Build of Keycloak (RHBK) deployment completed"
     return 0
@@ -419,7 +419,7 @@ deploy_strimzi() {
         export VERBOSE="true"
     fi
     
-    execute_script "${SCRIPT_DEPLOY_STRIMZI}" || log_warning "Strimzi deployment had issues but continuing..."
+    execute_script "${SCRIPT_DEPLOY_STRIMZI}" #|| log_warning "Strimzi deployment had issues but continuing..."
     
     log_success "Kafka/Strimzi deployment completed"
     return 0
@@ -459,7 +459,7 @@ deploy_authorino() {
         export VERBOSE="true"
     fi
     
-    execute_script "$(basename "${authorino_script}")" || log_warning "Authorino deployment had issues but continuing..."
+    execute_script "$(basename "${authorino_script}")" #|| log_warning "Authorino deployment had issues but continuing..."
     
     log_success "Authorino deployment completed"
     return 0
