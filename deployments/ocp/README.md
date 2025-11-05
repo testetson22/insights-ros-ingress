@@ -39,10 +39,9 @@ The script deploys in this order (each can be skipped):
 
 1. RHSSO/Keycloak (`--skip-rhsso`)
 2. Kafka/Strimzi (`--skip-strimzi`)
-3. Authorino OAuth2 (`--skip-authorino`)
-4. ROS Helm Chart (`--skip-helm`)
-5. TLS Certificates (`--skip-tls`)
-6. JWT Flow Test (`--skip-test`)
+3. ROS Helm Chart (`--skip-helm`)
+4. TLS Certificates (`--skip-tls`)
+5. JWT Flow Test (`--skip-test`)
 
 ## Command-Line Options
 
@@ -51,7 +50,6 @@ The script deploys in this order (each can be skipped):
 
 --skip-rhbk            Skip Red Hat Build of Keycloak (RHBK) deployment
 --skip-strimzi         Skip Kafka/Strimzi deployment
---skip-authorino       Skip Authorino OAuth2 deployment
 --skip-helm            Skip ROS Helm chart installation
 --skip-tls             Skip TLS certificate setup
 --skip-test            Skip JWT authentication test
@@ -129,7 +127,6 @@ helm upgrade --install ros-ocp <chart> \
 ./deploy-test-ros.sh \
     --skip-rhbk \
     --skip-strimzi \
-    --skip-authorino \
     --skip-tls \
     --skip-test \
     --image-tag main-xyz789
@@ -224,8 +221,6 @@ oc login https://api.example.com:6443
 │  │  Namespace: ros-ocp             │    │
 │  │                                  │    │
 │  │  RHBK (Keycloak)                │    │
-│  │       ↓                          │    │
-│  │  Authorino (OAuth2)             │    │
 │  │       ↓                          │    │
 │  │  ROS Ingress (JWT + Envoy)      │    │
 │  │       ↓                          │    │

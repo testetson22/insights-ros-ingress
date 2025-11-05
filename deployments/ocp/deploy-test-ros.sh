@@ -16,7 +16,6 @@ set -euo pipefail
 # Options:
 #   --skip-rhbk               Skip Red Hat Build of Keycloak (RHBK) deployment
 #   --skip-strimzi            Skip Kafka/Strimzi deployment
-#   --skip-authorino          Skip Authorino OAuth2 deployment
 #   --skip-helm               Skip ROS Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
 #   --skip-test               Skip JWT authentication test
@@ -99,7 +98,6 @@ OPENSHIFT_VALUES_FILE="openshift-values.yaml"
 # Step flags (default: run all steps)
 SKIP_RHBK=false  # Red Hat Build of Keycloak
 SKIP_STRIMZI=false
-SKIP_AUTHORINO=false
 SKIP_HELM=false
 SKIP_TLS=false
 SKIP_TEST=false
@@ -381,7 +379,7 @@ deploy_rhbk() {
         return 0
     fi
     
-    log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/6)"
+    log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/5)"
     
     download_script "${SCRIPT_DEPLOY_RHBK}"
     
@@ -404,7 +402,7 @@ deploy_strimzi() {
         return 0
     fi
     
-    log_step "Deploying Kafka/Strimzi (2/6)"
+    log_step "Deploying Kafka/Strimzi (2/5)"
     
     download_script "${SCRIPT_DEPLOY_STRIMZI}"
     
@@ -425,53 +423,13 @@ deploy_strimzi() {
     return 0
 }
 
-deploy_authorino() {
-    if [[ "${SKIP_AUTHORINO}" == "true" ]]; then
-        log_warning "Skipping Authorino OAuth2 deployment (--skip-authorino)"
-        return 0
-    fi
-    
-    log_step "Deploying Authorino OAuth2 (3/6)"
-    
-    # Download Authorino update script from GitLab snippet
-    local authorino_script="${TEMP_DIR}/authorinoupdate.sh"
-    local authorino_url="https://gitlab.cee.redhat.com/-/snippets/10530/raw/main/authorinoupdate.sh"
-    
-    log_verbose "Downloading: ${authorino_url}"
-    
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would download authorinoupdate.sh from GitLab"
-        touch "${authorino_script}"
-        chmod +x "${authorino_script}"
-    else
-        if ! curl -fsSL "${authorino_url}" -o "${authorino_script}"; then
-            log_warning "Failed to download authorinoupdate.sh from GitLab but continuing..."
-            return 0
-        fi
-        chmod +x "${authorino_script}"
-        log_verbose "Downloaded to: ${authorino_script}"
-    fi
-    
-    # Export environment variables for Authorino script
-    export NAMESPACE="${NAMESPACE}"
-    
-    if [[ "${VERBOSE}" == "true" ]]; then
-        export VERBOSE="true"
-    fi
-    
-    execute_script "$(basename "${authorino_script}")" #|| log_warning "Authorino deployment had issues but continuing..."
-    
-    log_success "Authorino deployment completed"
-    return 0
-}
-
 deploy_helm_chart() {
     if [[ "${SKIP_HELM}" == "true" ]]; then
         log_warning "Skipping ROS Helm chart installation (--skip-helm)"
         return 0
     fi
     
-    log_step "Deploying ROS Helm chart (4/6)"
+    log_step "Deploying ROS Helm chart (3/5)"
     
     download_script "${SCRIPT_INSTALL_HELM}"
     
@@ -556,7 +514,7 @@ setup_tls() {
         return 0
     fi
     
-    log_step "Configuring TLS certificates (5/6)"
+    log_step "Configuring TLS certificates (4/5)"
     
     download_script "${SCRIPT_SETUP_TLS}"
     
@@ -578,7 +536,7 @@ test_jwt_flow() {
         return 0
     fi
     
-    log_step "Testing JWT authentication (6/6)"
+    log_step "Testing JWT authentication (5/5)"
     
     # Ensure we're logged in to OpenShift for JWT test
     if [[ "${DRY_RUN}" != "true" ]]; then
@@ -619,7 +577,6 @@ print_summary() {
     log_info "Steps to execute:"
     [[ "${SKIP_RHBK}" == "false" ]] && echo "  ✓ Deploy Red Hat Build of Keycloak (RHBK)" || echo "  ✗ Deploy RHBK (SKIPPED)"
     [[ "${SKIP_STRIMZI}" == "false" ]] && echo "  ✓ Deploy Kafka/Strimzi" || echo "  ✗ Deploy Kafka/Strimzi (SKIPPED)"
-    [[ "${SKIP_AUTHORINO}" == "false" ]] && echo "  ✓ Deploy Authorino" || echo "  ✗ Deploy Authorino (SKIPPED)"
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy ROS Helm Chart" || echo "  ✗ Deploy ROS Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
@@ -654,10 +611,6 @@ main() {
                 ;;
             --skip-strimzi)
                 SKIP_STRIMZI=true
-                shift
-                ;;
-            --skip-authorino)
-                SKIP_AUTHORINO=true
                 shift
                 ;;
             --skip-helm)
