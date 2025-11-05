@@ -386,7 +386,7 @@ deploy_rhbk() {
     download_script "${SCRIPT_DEPLOY_RHBK}"
     
     # Export environment variables for RHBK script
-    export NAMESPACE="${NAMESPACE}"
+    # export NAMESPACE="${NAMESPACE}"
     
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
@@ -409,7 +409,7 @@ deploy_strimzi() {
     download_script "${SCRIPT_DEPLOY_STRIMZI}"
     
     # Export environment variables for Strimzi script
-    export KAFKA_NAMESPACE="${NAMESPACE}"
+    # export KAFKA_NAMESPACE="${NAMESPACE}"
     export KAFKA_ENVIRONMENT="ocp"
     export STORAGE_CLASS="${STORAGE_CLASS:-}"
     
@@ -711,7 +711,6 @@ main() {
     
     deploy_rhbk
     deploy_strimzi
-    deploy_authorino
     deploy_helm_chart
     setup_tls
     test_jwt_flow
